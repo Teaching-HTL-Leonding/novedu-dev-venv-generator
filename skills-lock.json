@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "find-docs": {
+      "source": "upstash/context7",
+      "sourceType": "github",
+      "skillPath": "skills/find-docs/SKILL.md",
+      "computedHash": "21c29a159e01792c0f5c70751e8c5c5e2197cf6f497597d476cf37d04734d947"
+    },
+    "microsoft-docs": {
+      "source": "microsoft/skills",
+      "sourceType": "github",
+      "skillPath": ".github/skills/microsoft-docs/SKILL.md",
+      "computedHash": "0acd8d2629937e021d605fd1426e641295909e13bab47cad1153793f5564e85e"
+    }
+  }
+}

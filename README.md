@@ -41,10 +41,12 @@ Shared once per deployment: a VNet + subnet and a Network Security Group.
   on `:443` with an automatically issued & renewed Let's Encrypt certificate.
 - **Node.js LTS** via **nvm**, plus **TypeScript** and **Vite**.
 - **[pi.dev](https://pi.dev) coding agent**, configured (via `~/.pi/agent/models.json`)
-  to talk to an **OpenAI-compatible proxy**. By default this is the Novedu coding
-  activity endpoint, where a short activity **Code** doubles as the API key and the
-  teacher's chosen model + system prompt are injected server-side (so pi registers a
-  single `coding` model). Pi extensions
+  to talk to an **OpenAI-compatible proxy**. By default this is the
+  [**Novedu**](https://github.com/Teaching-HTL-Leonding/novedu-chat-mvp) coding
+  activity endpoint — a teaching platform whose *coding* module exposes a public,
+  OpenAI-compatible proxy: a short activity **Code** doubles as the bearer token, and
+  the teacher's chosen model + system prompt are injected server-side (so pi registers
+  a single `coding` model). Pi extensions
   [`pi-web-access`](https://pi.dev/packages/pi-web-access) and
   [`@hypabolic/pi-hypa`](https://pi.dev/packages/@hypabolic/pi-hypa) are installed.
 - **.NET 10 SDK**, **Python 3** (`python`/`pip`/`venv`), **ImageMagick**,
@@ -59,8 +61,9 @@ Shared once per deployment: a VNet + subnet and a Network Security Group.
 ## Prerequisites
 
 - **Azure CLI** logged in to the target subscription (`az login`).
-- A **Novedu activity Code** (the coding activity's short code) — passed to
-  `deploy.sh` as the first argument. It doubles as pi's LLM API key. It is
+- A **Novedu activity Code** (a coding activity's short code from
+  [novedu-chat-mvp](https://github.com/Teaching-HTL-Leonding/novedu-chat-mvp)) —
+  passed to `deploy.sh` as the first argument. It doubles as pi's LLM API key. It is
   time-limited and visible to students, so it is not treated as a durable secret.
 - Local tools used by `deploy.sh`: `jq`, `envsubst` (gettext), `base64`,
   `openssl`. (`bicep` is fetched by the Azure CLI automatically.)

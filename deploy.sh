@@ -4,15 +4,24 @@
 #
 # Creates $COUNT Linux VMs (Standard_B2als_v2, 64GB Standard SSD) in resource group
 # $RG, each provisioned via cloud-init with code-server, nvm+Node LTS, the pi.dev
-# coding agent (Azure OpenAI-compatible), .NET 10, git and the GitHub CLI.
+# coding agent (wired to an OpenAI-compatible endpoint), .NET 10, git and the GitHub CLI.
+#
+# pi's LLM backend is an OpenAI-compatible proxy. By default this is the Novedu
+# "coding activity" endpoint, where a short activity Code doubles as the bearer
+# token/API key. Supply the Code as NOVEDU_CODE (in .env); optionally override the
+# endpoint with NOVEDU_BASE_URL.
 #
 # Idempotency: generated per-VM credentials are persisted in .state/credentials.json
 # and reused on re-runs, so re-deploying does not churn the VMs. Re-run safely.
 #
 # Usage:
-#   ./deploy.sh            # deploy / update
-#   ./deploy.sh --verify   # deploy, then smoke-test vcenv-vm-1 via run-command
-#   COUNT=10 ./deploy.sh   # override the VM count (spec default is 2, scales to ~45)
+#   ./deploy.sh <NOVEDU_CODE>                    # deploy / update
+#   ./deploy.sh <NOVEDU_CODE> --verify           # deploy, then smoke-test vcenv-vm-1
+#   ./deploy.sh <NOVEDU_CODE> --base-url <url>   # override the LLM endpoint
+#   COUNT=10 ./deploy.sh <NOVEDU_CODE>           # override VM count (default 2, scales to ~45)
+#
+# The Novedu activity Code is passed on the command line (it is time-limited and
+# visible to students anyway, so it is not treated as a secret).
 
 set -euo pipefail
 
@@ -21,10 +30,13 @@ RG="vcoding-env"
 PREFIX="vcenv"
 COUNT="${COUNT:-2}"
 LOCATION="austriaeast"
-AZURE_ENDPOINT="https://oai-rstropek-sweden.openai.azure.com/"
-AZURE_LLM_DEPLOYMENT="gpt-5.4-mini"   # default model pi uses (cheaper)
-SECOND_MODEL="gpt-5.5"                # also registered in pi
 ADMIN_USERNAME="student"
+
+# pi's LLM backend (OpenAI-compatible proxy). The Novedu activity Code IS the API
+# key; the base URL is optional and defaults to the Novedu coding endpoint.
+NOVEDU_BASE_URL="${NOVEDU_BASE_URL:-https://novedu-chat-mvp-at.azurewebsites.net/api/coding/v1}"
+NOVEDU_MODEL_ID="${NOVEDU_MODEL_ID:-coding}"                    # model id pi sends to the proxy
+NOVEDU_MODEL_NAME="${NOVEDU_MODEL_NAME:-TypeScript Coding Buddy (Beginners)}"  # display label in pi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="$SCRIPT_DIR/.state"
@@ -34,8 +46,42 @@ LOGINS_TXT="$STATE_DIR/logins.txt"
 LOGINS_CSV="$STATE_DIR/logins.csv"
 BOOTSTRAP_TMPL="$SCRIPT_DIR/cloud-init/bootstrap.sh"
 
+# ------------------------------------------------------------------ arguments
+usage() {
+  cat >&2 <<USAGE
+Usage: ./deploy.sh <NOVEDU_CODE> [--base-url <url>] [--rotate-passwords] [--verify]
+
+  <NOVEDU_CODE>       Novedu activity Code; doubles as pi's LLM API key (required).
+  --base-url <url>    OpenAI-compatible endpoint to use
+                      (default: $NOVEDU_BASE_URL).
+  --rotate-passwords  Generate FRESH passwords for every VM instead of reusing the
+                      ones stored in .state/credentials.json. Use this when starting
+                      a NEW cohort on reused VM names so previous students cannot log
+                      in. (Only takes effect on freshly created VMs — Azure does not
+                      change the admin password of an already-existing VM.)
+  --verify            After deploying, smoke-test ${PREFIX}-vm-1 via run-command.
+
+Environment overrides: COUNT, NOVEDU_BASE_URL, NOVEDU_MODEL_ID, NOVEDU_MODEL_NAME.
+USAGE
+}
+
+NOVEDU_CODE=""
 VERIFY=false
-[[ "${1:-}" == "--verify" ]] && VERIFY=true
+ROTATE_PW=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --verify)             VERIFY=true; shift ;;
+    --rotate-passwords|--new-passwords) ROTATE_PW=true; shift ;;
+    --base-url)           NOVEDU_BASE_URL="${2:?ERROR: --base-url requires a URL}"; shift 2 ;;
+    --base-url=*)         NOVEDU_BASE_URL="${1#*=}"; shift ;;
+    -h|--help)            usage; exit 0 ;;
+    --)                   shift; break ;;
+    -*)                   echo "ERROR: unknown option '$1'" >&2; usage; exit 1 ;;
+    *)                    if [[ -z "$NOVEDU_CODE" ]]; then NOVEDU_CODE="$1"; shift
+                          else echo "ERROR: unexpected extra argument '$1'" >&2; usage; exit 1; fi ;;
+  esac
+done
+: "${NOVEDU_CODE:?ERROR: missing Novedu Code (pass it as the first argument; see --help)}"
 
 # ------------------------------------------------------------------ preflight
 for cmd in az jq envsubst base64 openssl od fold awk; do
@@ -44,13 +90,10 @@ done
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR"
 
-# API key for pi.dev comes from .env
-if [[ -f "$SCRIPT_DIR/.env" ]]; then set -a; source "$SCRIPT_DIR/.env"; set +a; fi
-: "${AZURE_OPENAI_KEY:?ERROR: AZURE_OPENAI_KEY not set (expected in .env)}"
-
 echo ">> Subscription : $(az account show --query name -o tsv)"
 echo ">> Location     : $LOCATION"
 echo ">> VM count     : $COUNT"
+echo ">> LLM endpoint : $NOVEDU_BASE_URL (model: $NOVEDU_MODEL_ID)"
 
 # ------------------------------------------------------------------ vCPU quota preflight
 needed=$((COUNT * 2))   # 2 vCPUs per B2als_v2 (quota family: standardBasv2Family)
@@ -93,10 +136,13 @@ cloud_config_for() {   # $1 = base64 of rendered bootstrap.sh
   printf '#cloud-config\nwrite_files:\n  - path: /opt/vcenv/bootstrap.sh\n    permissions: '\''0755'\''\n    owner: root:root\n    encoding: b64\n    content: %s\nruncmd:\n  - [ bash, /opt/vcenv/bootstrap.sh ]\n' "$1"
 }
 
+$ROTATE_PW && echo ">> Rotating passwords: generating fresh credentials for all VMs."
+
 items_json=()
 for i in $(seq 1 "$COUNT"); do
   name="${PREFIX}-vm-${i}"
-  pw=$(jq -r --arg n "$name" '.[$n].password // empty' "$CRED_FILE")
+  # --rotate-passwords forces a new password even if one is stored (new cohort).
+  if $ROTATE_PW; then pw=""; else pw=$(jq -r --arg n "$name" '.[$n].password // empty' "$CRED_FILE"); fi
   if [[ -z "$pw" ]]; then
     pw=$(gen_password)
     tmp=$(mktemp)
@@ -110,10 +156,10 @@ for i in $(seq 1 "$COUNT"); do
   # Predictable public FQDN (dns label = VM name, per vm.bicep); Caddy uses it for TLS.
   fqdn="${name}.${LOCATION}.cloudapp.azure.com"
   export VC_STUDENT_USER="$ADMIN_USERNAME" VC_STUDENT_PASSWORD="$pw" \
-         VC_AZURE_ENDPOINT="$AZURE_ENDPOINT" VC_AZURE_OPENAI_KEY="$AZURE_OPENAI_KEY" \
-         VC_MODEL_DEFAULT="$AZURE_LLM_DEPLOYMENT" VC_MODEL_SECOND="$SECOND_MODEL" \
+         VC_LLM_BASE_URL="$NOVEDU_BASE_URL" VC_LLM_API_KEY="$NOVEDU_CODE" \
+         VC_LLM_MODEL_ID="$NOVEDU_MODEL_ID" VC_LLM_MODEL_NAME="$NOVEDU_MODEL_NAME" \
          VC_FQDN="$fqdn"
-  rendered=$(envsubst '${VC_STUDENT_USER} ${VC_STUDENT_PASSWORD} ${VC_AZURE_ENDPOINT} ${VC_AZURE_OPENAI_KEY} ${VC_MODEL_DEFAULT} ${VC_MODEL_SECOND} ${VC_FQDN}' < "$BOOTSTRAP_TMPL")
+  rendered=$(envsubst '${VC_STUDENT_USER} ${VC_STUDENT_PASSWORD} ${VC_LLM_BASE_URL} ${VC_LLM_API_KEY} ${VC_LLM_MODEL_ID} ${VC_LLM_MODEL_NAME} ${VC_FQDN}' < "$BOOTSTRAP_TMPL")
   b64=$(printf '%s' "$rendered" | base64 | tr -d '\n')
   cc=$(cloud_config_for "$b64")
 

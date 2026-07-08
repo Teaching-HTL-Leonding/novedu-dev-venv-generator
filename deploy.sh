@@ -61,7 +61,9 @@ Usage: ./deploy.sh <NOVEDU_CODE> [--base-url <url>] [--rotate-passwords] [--veri
                       change the admin password of an already-existing VM.)
   --verify            After deploying, smoke-test ${PREFIX}-vm-1 via run-command.
 
-Environment overrides: COUNT, NOVEDU_BASE_URL, NOVEDU_MODEL_ID, NOVEDU_MODEL_NAME.
+Environment overrides: COUNT, NOVEDU_BASE_URL, NOVEDU_MODEL_ID, NOVEDU_MODEL_NAME, BATCH_SIZE
+  (BATCH_SIZE, default 10, caps how many VMs go into one ARM deployment call —
+  lower it if you still hit DeploymentSizeExceeded).
 USAGE
 }
 
@@ -163,8 +165,8 @@ for i in $(seq 1 "$COUNT"); do
   b64=$(printf '%s' "$rendered" | base64 | tr -d '\n')
   cc=$(cloud_config_for "$b64")
 
-  items_json+=("$(jq -n --arg name "$name" --arg u "$ADMIN_USERNAME" --arg p "$pw" --arg cd "$cc" \
-    '{name:$name, adminUsername:$u, adminPassword:$p, customData:$cd}')")
+  items_json+=("$(jq -n --arg name "$name" --arg u "$ADMIN_USERNAME" --arg p "$pw" --arg cd "$cc" --argjson idx "$i" \
+    '{name:$name, adminUsername:$u, adminPassword:$p, customData:$cd, index:$idx}')")
 done
 chmod 600 "$CRED_FILE"
 
@@ -183,13 +185,30 @@ jq -n --arg prefix "$PREFIX" --arg location "$LOCATION" --argjson items "$items"
 chmod 600 "$PARAMS_FILE"
 
 # ------------------------------------------------------------------ deploy
-echo ">> Deploying $COUNT VM(s) — this takes a few minutes..."
-az deployment group create \
-  --resource-group "$RG" \
-  --name vcenv \
-  --template-file "$SCRIPT_DIR/bicep/main.bicep" \
-  --parameters "@$PARAMS_FILE" \
-  --output none
+# Batched: a single deployment covering many VMs trips Azure's ARM deployment-job
+# size limit (~1 MB compressed; see https://aka.ms/DeploymentSizeLimit) because
+# Bicep inlines the AVM VM module fully for every loop iteration. Splitting into
+# several smaller `az deployment group create` calls keeps each one under that
+# limit; the shared network module is idempotently re-applied in every batch,
+# which is a harmless no-op after the first.
+BATCH_SIZE="${BATCH_SIZE:-10}"
+total_batches=$(( (COUNT + BATCH_SIZE - 1) / BATCH_SIZE ))
+echo ">> Deploying $COUNT VM(s) in $total_batches batch(es) of up to $BATCH_SIZE — this takes a few minutes..."
+batch_num=0
+for (( start=0; start<COUNT; start+=BATCH_SIZE )); do
+  batch_num=$((batch_num + 1))
+  end=$((start + BATCH_SIZE)); (( end > COUNT )) && end=$COUNT
+  echo ">> Batch $batch_num/$total_batches: VMs $((start + 1))-$end"
+  batch_file=$(mktemp)
+  jq --argjson s "$start" --argjson e "$end" '.parameters.vms.value.items |= .[$s:$e]' "$PARAMS_FILE" > "$batch_file"
+  az deployment group create \
+    --resource-group "$RG" \
+    --name "vcenv-batch-$batch_num" \
+    --template-file "$SCRIPT_DIR/bicep/main.bicep" \
+    --parameters "@$batch_file" \
+    --output none
+  rm -f "$batch_file"
+done
 echo ">> Deployment complete."
 
 # ------------------------------------------------------------------ distributable logins

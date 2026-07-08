@@ -10,7 +10,7 @@ param location string = resourceGroup().location
 @description('Prefix for all resource names.')
 param prefix string
 
-@description('Per-VM configuration: { items: [ { name, adminUsername, adminPassword, customData } ] }.')
+@description('Per-VM configuration: { items: [ { name, adminUsername, adminPassword, customData, index } ] }. `index` is the global 1-based VM ordinal, stable across deploy.sh batches unlike the array position.')
 @secure()
 param vms object
 
@@ -23,7 +23,7 @@ module network 'network.bicep' = {
 }
 
 module vmMod 'vm.bicep' = [
-  for (item, i) in vms.items: {
+  for item in vms.items: {
     name: 'vm-${item.name}'
     params: {
       name: item.name
@@ -33,9 +33,11 @@ module vmMod 'vm.bicep' = [
       subnetResourceId: network.outputs.subnetResourceId
       customData: item.customData
       // Per-environment tag so all resources of one VM can be filtered at once,
-      // e.g. `az resource list --tag environment=vcenv-01`.
+      // e.g. `az resource list --tag environment=vcenv-01`. Uses item.index (not
+      // the array position) so tags stay correct when deploy.sh splits vms.items
+      // across multiple batched deployments to stay under ARM's deployment size limit.
       tags: {
-        environment: '${prefix}-${padLeft(string(i + 1), 2, '0')}'
+        environment: '${prefix}-${padLeft(string(item.index), 2, '0')}'
       }
     }
   }

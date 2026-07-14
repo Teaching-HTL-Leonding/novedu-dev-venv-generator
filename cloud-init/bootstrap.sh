@@ -121,7 +121,7 @@ cat > "$pi_agent_dir/models.json" <<EOF
           "name": "$llm_model_name",
           "reasoning": false,
           "input": ["text"],
-          "contextWindow": 32768,
+          "contextWindow": 128000,
           "maxTokens": 4096,
           "cost": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0}
         }

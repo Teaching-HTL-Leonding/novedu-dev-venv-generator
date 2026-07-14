@@ -1,4 +1,4 @@
-# vcoding-env — temporary student coding environments on Azure
+# vcoding-env: temporary student coding environments on Azure
 
 This project generates disposable, browser-based coding environments for students
 on Azure. One command spins up *N* identical Linux VMs, each running
@@ -7,7 +7,7 @@ HTTPS, pre-loaded with a full toolchain and the [pi.dev](https://pi.dev) coding
 agent wired to an OpenAI-compatible LLM endpoint.
 
 Everything is driven by a single idempotent `deploy.sh` that renders per-VM
-cloud-init and deploys Bicep. Re-running it is safe — credentials are persisted
+cloud-init and deploys Bicep. Re-running it is safe: credentials are persisted
 locally and reused, so VMs are not churned.
 
 ---
@@ -33,7 +33,7 @@ Shared once per deployment: a VNet + subnet and a Network Security Group.
 | 22 | SSH (user + password) |
 | 443 | **code-server over HTTPS** (Caddy, auto Let's Encrypt cert) |
 | 80 | Let's Encrypt HTTP-01 challenge + redirect to HTTPS |
-| 8080 | **students' own dev servers** (plain HTTP — bind your app to `0.0.0.0:8080`) |
+| 8080 | **students' own dev servers** (plain HTTP; bind your app to `0.0.0.0:8080`) |
 
 ### What's installed on every VM
 
@@ -43,7 +43,7 @@ Shared once per deployment: a VNet + subnet and a Network Security Group.
 - **[pi.dev](https://pi.dev) coding agent**, configured (via `~/.pi/agent/models.json`)
   to talk to an **OpenAI-compatible proxy**. By default this is the
   [**Novedu**](https://github.com/Teaching-HTL-Leonding/novedu-chat-mvp) coding
-  activity endpoint — a teaching platform whose *coding* module exposes a public,
+  activity endpoint, a teaching platform whose *coding* module exposes a public,
   OpenAI-compatible proxy: a short activity **Code** doubles as the bearer token, and
   the teacher's chosen model + system prompt are injected server-side (so pi registers
   a single `coding` model). Pi extensions
@@ -62,7 +62,7 @@ Shared once per deployment: a VNet + subnet and a Network Security Group.
 
 - **Azure CLI** logged in to the target subscription (`az login`).
 - A **Novedu activity Code** (a coding activity's short code from
-  [novedu-chat-mvp](https://github.com/Teaching-HTL-Leonding/novedu-chat-mvp)) —
+  [novedu-chat-mvp](https://github.com/Teaching-HTL-Leonding/novedu-chat-mvp)),
   passed to `deploy.sh` as the first argument. It doubles as pi's LLM API key. It is
   time-limited and visible to students, so it is not treated as a durable secret.
 - Local tools used by `deploy.sh`: `jq`, `envsubst` (gettext), `base64`,
@@ -95,19 +95,48 @@ Configuration lives at the top of `deploy.sh` (all overridable via environment):
 | `NOVEDU_BASE_URL` | `…/api/coding/v1` | OpenAI-compatible endpoint (or use `--base-url`) |
 | `NOVEDU_MODEL_ID` | `coding` | model id pi sends to the proxy |
 | `NOVEDU_MODEL_NAME` | `TypeScript Coding Buddy (Beginners)` | display label shown in pi |
+| `BATCH_SIZE` | `10` | max VMs per ARM deployment call; deploys are split into batches to stay under ARM's deployment-size limit |
 
-The Novedu **Code** is not a variable — it is the required first CLI argument.
+The Novedu **Code** is not a variable; it is the required first CLI argument.
 
-### Output — the student logins
+### Output: the student logins
 
 After a successful deploy, `deploy.sh` prints and writes (into the gitignored
 `.state/` directory):
 
-- **`.state/logins.txt`** — a hand-out list: per environment its code-server
+- **`.state/logins.txt`**, a hand-out list: per environment its code-server
   **HTTPS URL**, password, dev URL, and SSH command.
-- **`.state/logins.csv`** — the same, spreadsheet-friendly.
+- **`.state/logins.csv`**: the same, spreadsheet-friendly.
 
 The same generated password is used for both code-server (browser) and SSH.
+
+---
+
+## Workshop reports & analysis
+
+This project has been used to run three real teenager coding workshops in July 2026.
+Each `2026-07-DD-reports/` folder holds that day's findings, and a cross-workshop
+document ties them together.
+
+| Workshop | Cohort / config | Folder |
+|---|---|---|
+| **Jul 3** (rehearsal) | 5 HTL computer-science students, age 16 · SCCH provider · 32k context · **usage data only** (no conversations) | [`2026-07-03-reports/`](2026-07-03-reports/token-usage.md): token-usage report + charts |
+| **Jul 8** (workshop 1) | 20 students, age 15–16 · Azure Foundry / gpt-5.4-mini · 32k context | [`2026-07-08-reports/`](2026-07-08-reports/student-work.md): per-student work reports + [token usage](2026-07-08-reports/token-usage.md) |
+| **Jul 14** (workshop 2) | 15 students, age 12–14 · Azure Foundry / gpt-5.4-mini · 128k context | [`2026-07-14-reports/`](2026-07-14-reports/student-work.md): per-student reports + screenshots + [token usage](2026-07-14-reports/token-usage.md) |
+
+**[`2026-07-workshop-comparison.md`](2026-07-workshop-comparison.md)** compares all three
+days (with charts under [`2026-07-workshop-comparison/`](2026-07-workshop-comparison/)).
+Headline findings: raising the model's context window from **32k to 128k** (Jul 8 → Jul 14)
+quadrupled new-input token volume per student-hour and pushed cost per student from ~$0.90
+to ~$4.00, but it **eliminated the "agent went silent / empty response" context-exhaustion
+failures**, leaving the separate **output-length limit** (large file rewrites getting
+truncated) as the new dominant friction. The two 32k days (Jul 3 and Jul 8) cluster at
+~2.5–2.7M tokens/student while the single 128k day sits ~3.7× higher, isolating the context
+window as the driver.
+
+The per-student reports were produced by analysing the pi conversation transcripts on each
+VM (`~/.pi/agent/sessions/…`) and the students' `~/website` projects; the token-usage
+numbers come from the Novedu usage database.
 
 ---
 
@@ -115,7 +144,8 @@ The same generated password is used for both code-server (browser) and SSH.
 
 ```
 deploy.sh                     Orchestrator: config, quota preflight, credentials,
-                              renders cloud-init, runs the Bicep deployment, prints logins.
+                              renders cloud-init, runs the Bicep deployment(s), in batches
+                              of up to BATCH_SIZE (10) VMs, then prints logins.
 bicep/
   main.bicep                  RG-scope: builds the network once, then loops one VM per
                               environment. Per-VM config (incl. passwords) is passed as a
@@ -146,15 +176,18 @@ name, if you tear down the environments and redeploy the same names, the *new*
 students would get the *same* passwords the previous cohort saw. To avoid that,
 redeploy with `--rotate-passwords`, which generates fresh passwords for every VM
 and overwrites `.state/credentials.json`. (It only takes effect on freshly created
-VMs — Azure does not change the admin password of an already-existing VM, so rotate
+VMs; Azure does not change the admin password of an already-existing VM, so rotate
 *after* deleting the resource group.)
 
 ### Scaling to many environments
 
 `COUNT` is designed to scale to ~45. The `/24` subnet holds them comfortably, and
 `deploy.sh` performs a vCPU-quota preflight (45 environments = 90 vCPUs of the
-`Standard Basv2` family) — if the regional quota is too low it stops early and
-tells you to request an increase.
+`Standard Basv2` family); if the regional quota is too low it stops early and
+tells you to request an increase. To stay under ARM's per-deployment size limit at
+scale, the VMs are deployed in **batches of up to `BATCH_SIZE` (default 10)**: each
+batch is a separate `vcenv-batch-N` deployment, and the shared network module is
+idempotently re-applied in every batch.
 
 ---
 
@@ -164,8 +197,8 @@ tells you to request an increase.
   authentication is a per-VM password. Students' own dev servers on **8080 are
   plain HTTP** by design (scratch/demo traffic).
 - These are **disposable** environments. The Novedu **Code** is embedded in each
-  VM's cloud-init and in `~/.pi/agent/models.json` (readable on the VM) — but it is a
+  VM's cloud-init and in `~/.pi/agent/models.json` (readable on the VM), but it is a
   time-limited activity code that students can see anyway, not a durable secret.
-  Generated passwords are stored locally under `.state/` — acceptable for throwaway
+  Generated passwords are stored locally under `.state/`, acceptable for throwaway
   student boxes and not committed to git (`.gitignore` excludes `.state/`).
 - To tear everything down: `az group delete -n vcoding-env --yes`.

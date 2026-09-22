@@ -116,13 +116,15 @@ The same generated password is used for both code-server (browser) and SSH.
 
 This project has been used to run three real teenager coding workshops in July 2026.
 Each `2026-07-DD-reports/` folder holds that day's findings, and a cross-workshop
-document ties them together.
+document ties them together. A later Ars Electronica hackathon SSH snapshot is also
+included.
 
 | Workshop | Cohort / config | Folder |
 |---|---|---|
 | **Jul 3** (rehearsal) | 5 HTL computer-science students, age 16 · SCCH provider · 32k context · **usage data only** (no conversations) | [`2026-07-03-reports/`](2026-07-03-reports/token-usage.md): token-usage report + charts |
 | **Jul 8** (workshop 1) | 20 students, age 15–16 · Azure Foundry / gpt-5.4-mini · 32k context | [`2026-07-08-reports/`](2026-07-08-reports/student-work.md): per-student work reports + [token usage](2026-07-08-reports/token-usage.md) |
 | **Jul 14** (workshop 2) | 15 students, age 12–14 · Azure Foundry / gpt-5.4-mini · 128k context | [`2026-07-14-reports/`](2026-07-14-reports/student-work.md): per-student reports + screenshots + [token usage](2026-07-14-reports/token-usage.md) |
+| **Sep 13** (hackathon snapshot) | 30 environments · Pi sessions on 2 VMs · 3 modified websites | [`2026-09-13-reports/`](2026-09-13-reports/report.md): consolidated coding report + [OpenRouter key usage](2026-09-13-reports/openrouter-usage.md) |
 
 **[`2026-07-workshop-comparison.md`](2026-07-workshop-comparison.md)** compares all three
 days (with charts under [`2026-07-workshop-comparison/`](2026-07-workshop-comparison/)).
@@ -134,9 +136,10 @@ truncated) as the new dominant friction. The two 32k days (Jul 3 and Jul 8) clus
 ~2.5–2.7M tokens/student while the single 128k day sits ~3.7× higher, isolating the context
 window as the driver.
 
-The per-student reports were produced by analysing the pi conversation transcripts on each
-VM (`~/.pi/agent/sessions/…`) and the students' `~/website` projects; the token-usage
-numbers come from the Novedu usage database.
+The July per-student reports were produced by analysing the pi conversation transcripts on
+each VM (`~/.pi/agent/sessions/…`) and the students' `~/website` projects; the token-usage
+numbers come from the Novedu usage database. The September snapshot examines the same Pi
+session path and website source over SSH; it does not include usage-cost data.
 
 ---
 
